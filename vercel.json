@@ -1,14 +1,12 @@
 {
   "version": 2,
   "functions": {
-    "api/run.js": {
-      "runtime": "nodejs18.x"
+    "api/*.js": {
+      "runtime": "nodejs20.x"
     }
   },
   "crons": [
-    {
-      "path": "/api/run",
-      "schedule": "0 14 * * *"
-    }
+    { "path": "/api/run", "schedule": "0 14 * * *" },
+    { "path": "/api/run", "schedule": "0 15 * * *" }
   ]
 }
