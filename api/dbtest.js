@@ -1,4 +1,5 @@
-import { Client } from "pg";
+import pg from "pg";
+const { Client } = pg;
 
 export default async function handler(req, res) {
   const url = process.env.DATABASE_URL;
