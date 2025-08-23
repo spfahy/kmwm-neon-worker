@@ -1,4 +1,5 @@
-import { Client } from "pg";
+import pg from "pg";
+const { Client } = pg;
 
 export default async function handler(req, res) {
   const client = new Client({
@@ -16,3 +17,4 @@ export default async function handler(req, res) {
     await client.end();
   }
 }
+
