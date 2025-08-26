@@ -1,6 +1,9 @@
 {
+  "functions": {
+    "api/**/*.js": { "runtime": "nodejs18.x" }
+  },
   "crons": [
-    { "path": "/api/run?tag=close", "schedule": "20 20 * * 1-5" },   // 3:20 PM CT on weekdays (20:20 UTC in summer)
-    { "path": "/api/run?tag=weekly", "schedule": "15 13 * * 6" }     // Saturday 8:15 AM CT (13:15 UTC)
+    { "path": "/api/run?tag=close",  "schedule": "20 20 * * 1-5" },
+    { "path": "/api/run?tag=weekly", "schedule": "15 13 * * 6" }
   ]
 }
