@@ -1,7 +1,6 @@
 {
-  "version": 2,
   "crons": [
-    { "path": "/api/run", "schedule": "0 14 * * *" },
-    { "path": "/api/run", "schedule": "0 15 * * *" }
+    { "path": "/api/run?tag=close", "schedule": "20 20 * * 1-5" },   // 3:20 PM CT on weekdays (20:20 UTC in summer)
+    { "path": "/api/run?tag=weekly", "schedule": "15 13 * * 6" }     // Saturday 8:15 AM CT (13:15 UTC)
   ]
 }
