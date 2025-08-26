@@ -1,15 +1,34 @@
-// api/envcheck.js
+// envcheck.js — shows DB + PRICE_CSV_URL and tests the CSV link
 export default async function handler(req, res) {
-  const v = process.env.DATABASE_URL || "";
-  let host = "invalid";
-  try { host = new URL(v).host; } catch {}
+  const db = process.env.DATABASE_URL || "";
+  const priceUrl = process.env.PRICE_CSV_URL || "";
+
+  let priceStatus = null, priceErr = null;
+  if (priceUrl) {
+    try {
+      const r = await fetch(priceUrl, { cache: "no-store" });
+      priceStatus = r.status; // 200 is success; 404/403 means URL/sharing/tab mismatch
+    } catch (e) {
+      priceErr = String(e);
+    }
+  }
+
+  // mask DB host only (no creds)
+  const host = db.includes("@") ? db.split("@")[1]?.split("/")[0] : null;
 
   return res.status(200).json({
     ok: true,
-    len: v.length,
-    startsWith: v.slice(0, 10), // should be "postgres://"
-    host,                       // should be your ep-....neon.tech host
-    hasQuotes: /^['"].*['"]$/.test(v.trim()),
-    hasPsqlPrefix: v.trim().startsWith("psql ")
+    database_url: {
+      len: db.length,
+      startsWith: db.slice(0, 9), // "postgres:"
+      host
+    },
+    price_csv_url: {
+      present: !!priceUrl,
+      len: priceUrl.length,
+      beginsWith: priceUrl.slice(0, 60),
+      status: priceStatus,
+      error: priceErr
+    }
   });
 }
