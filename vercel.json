@@ -1,6 +1,6 @@
 {
   "functions": {
-    "api/**/*.js": { "runtime": "nodejs18.x" }
+    "api/**/*.{js,ts}": { "runtime": "nodejs20.x" }
   },
   "crons": [
     { "path": "/api/run?tag=close",  "schedule": "20 20 * * 1-5" },
