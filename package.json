@@ -1,7 +1,9 @@
 {
-  "name": "kmwm-prices-worker",
+  "name": "kmwm-neon-worker",
   "private": true,
+  "version": "1.0.0",
   "type": "module",
+  "engines": { "node": ">=18" },
   "dependencies": {
     "papaparse": "^5.4.1",
     "pg": "^8.11.3"
