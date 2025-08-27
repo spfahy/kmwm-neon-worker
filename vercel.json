@@ -1,6 +1,12 @@
 {
   "crons": [
-    { "path": "/api/run?tag=close",  "schedule": "20 20 * * 1-5" },
-    { "path": "/api/run?tag=weekly", "schedule": "15 13 * * 6" }
+    {
+      "path": "/api/run",
+      "schedule": "0 14 * * 1-5"
+    },
+    {
+      "path": "/api/run",
+      "schedule": "0 14 * * 6"
+    }
   ]
 }
