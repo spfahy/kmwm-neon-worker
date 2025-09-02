@@ -1,4 +1,4 @@
-// /api/dbinfo.js
+// /api/dbinfo.js (Node runtime)
 import { Pool } from "pg";
 
 const pool = new Pool({
@@ -18,11 +18,7 @@ export default async function handler(req, res) {
       const cnt = await client.query(
         `select count(*)::int as rows from public.positions`
       );
-      res.status(200).json({
-        ok: true,
-        ...id.rows[0],
-        positions_rows: cnt.rows[0].rows,
-      });
+      res.status(200).json({ ok: true, ...id.rows[0], positions_rows: cnt.rows[0].rows });
     } finally {
       client.release();
     }
