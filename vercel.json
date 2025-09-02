@@ -1,5 +1,6 @@
 {
   "crons": [
-    { "path": "/api/run", "schedule": "0 14 * * 1-6" }
+    { "path": "/api/run", "schedule": "0 14 * * 1-6" },          // 9:00 AM CT Mon–Sat
+    { "path": "/api/audit-snapshot", "schedule": "*/10 * * * *" } // every 10 minutes
   ]
 }
