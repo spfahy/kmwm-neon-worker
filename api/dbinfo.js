@@ -1,12 +1,15 @@
-// /api/dbinfo.js (Node runtime)
-import { Pool } from "pg";
+// /api/dbinfo.js (Edge runtime)
+export const config = { runtime: "edge" };
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  application_name: "KMWM-DBInfo",
-});
+export default async function handler(req) {
+  // use the web-standard client for Edge; if your project already set up a pooled fetch,
+  // keep it consistent with your existing edge functions
+  const { Pool } = await import("pg"); // Vercel supports dynamic import on Edge with pg >= 8.11
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    application_name: "KMWM-DBInfo",
+  });
 
-export default async function handler(req, res) {
   try {
     const client = await pool.connect();
     try {
@@ -18,11 +21,15 @@ export default async function handler(req, res) {
       const cnt = await client.query(
         `select count(*)::int as rows from public.positions`
       );
-      res.status(200).json({ ok: true, ...id.rows[0], positions_rows: cnt.rows[0].rows });
+      const body = JSON.stringify({ ok: true, ...id.rows[0], positions_rows: cnt.rows[0].rows });
+      return new Response(body, { headers: { "content-type": "application/json" } });
     } finally {
       client.release();
     }
   } catch (e) {
-    res.status(500).json({ ok: false, error: String(e) });
+    return new Response(JSON.stringify({ ok: false, error: String(e) }), {
+      status: 500,
+      headers: { "content-type": "application/json" },
+    });
   }
 }
