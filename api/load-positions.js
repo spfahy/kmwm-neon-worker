@@ -1,3 +1,7 @@
+const whoami = await client.query(
+  "select current_user, current_database(), current_schema"
+);
+console.log("DB WhoAmI:", whoami.rows[0]);
 // api/load-positions.js
 import { Client } from "pg";
 import Papa from "papaparse";
