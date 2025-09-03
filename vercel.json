@@ -1,6 +1,5 @@
 {
-  "crons": [
-    { "path": "/api/run", "schedule": "0 14 * * 1-6" },
-    { "path": "/api/audit-snapshot", "schedule": "*/10 * * * *" }
-  ]
+  "version": 2,
+  "builds": [{ "src": "api/**/*.js", "use": "@vercel/node" }],
+  "routes": [{ "src": "/api/(.*)", "dest": "/api/$1" }]
 }
