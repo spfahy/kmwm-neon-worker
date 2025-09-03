@@ -1,6 +1,3 @@
-const whoami = await client.query(
-  "select current_user, current_database(), current_schema"
-);
 console.log("DB WhoAmI:", whoami.rows[0]);
 // api/load-positions.js
 import { Client } from "pg";
@@ -39,6 +36,12 @@ export default async function handler(req, res) {
 
   const client = new Client({ connectionString: db, ssl: { rejectUnauthorized: false } });
   await client.connect();
+
+  // Diagnostic query
+  const whoami = await client.query(
+    "select current_user, current_database(), current_schema"
+  );
+  console.log("DB WhoAmI:", whoami.rows[0]);
 
   const upsert = `
     insert into positions_raw(symbol, name, "Ave Share Price", "Jan 1 Price", "Pur Dt", shares)
