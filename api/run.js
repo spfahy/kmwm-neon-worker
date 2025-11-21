@@ -179,4 +179,144 @@ async function loadMetalsCurveFromSheet(client, logger = console) {
   }
 
   const rows = parsed.data || [];
-  if (rows.length <
+  if (rows.length < 2) {
+    logger.warn("Metals CSV has no data rows");
+    return { processed: 0, skipped: 0 };
+  }
+
+  const header = rows[0].map((h) => h.toString().trim().toLowerCase());
+  const idx = (name) => header.indexOf(name);
+
+  const iAsOf = idx("as of date");
+  const iMetal = idx("metal");
+  const iTenor = idx("tenor months");
+  const iPrice = idx("price");
+  const iReal = idx("10 yr real yld");
+  const iDxy = idx("dollar index");
+  const iDef = idx("deficit gdp flag");
+
+  // Ensure required columns exist
+  for (const col of METALS_REQUIRED_COLS) {
+    if (header.indexOf(col) === -1) {
+      throw new Error(`Metals CSV missing required column: "${col}"`);
+    }
+  }
+
+  const upsertLatestMetalsSQL = `
+    INSERT INTO metals_curve_latest (
+      as_of_date, metal, tenor_months, price,
+      real_10yr_yld, dollar_index, deficit_gdp_flag
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    ON CONFLICT (metal, tenor_months)
+    DO UPDATE SET
+      as_of_date       = EXCLUDED.as_of_date,
+      price            = EXCLUDED.price,
+      real_10yr_yld    = EXCLUDED.real_10yr_yld,
+      dollar_index     = EXCLUDED.dollar_index,
+      deficit_gdp_flag = EXCLUDED.deficit_gdp_flag,
+      updated_at       = now();
+  `;
+
+  const insertHistoryMetalsSQL = `
+    INSERT INTO metals_curve_history (
+      as_of_date, metal, tenor_months, price,
+      real_10yr_yld, dollar_index, deficit_gdp_flag
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7);
+  `;
+
+  let processed = 0;
+  let skipped = 0;
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || !row.length) {
+      skipped++;
+      continue;
+    }
+
+    const asOfRaw = row[iAsOf] ?? "";
+    const metal = (row[iMetal] ?? "").toString().trim();
+    const tenorMonths = parseInt(row[iTenor] ?? "", 10);
+    const price = parseFloat((row[iPrice] ?? "").toString());
+
+    const real10yr =
+      iReal >= 0 && row[iReal] !== "" ? parseFloat(row[iReal]) : null;
+    const dxy =
+      iDxy >= 0 && row[iDxy] !== "" ? parseFloat(row[iDxy]) : null;
+    const deficitFlag =
+      iDef >= 0 && row[iDef] !== ""
+        ? String(row[iDef]).trim().toLowerCase() === "true"
+        : null;
+
+    if (!metal || Number.isNaN(tenorMonths) || Number.isNaN(price)) {
+      skipped++;
+      continue;
+    }
+
+    const asOfDate = asOfRaw || null; // let Postgres cast
+
+    await client.query(upsertLatestMetalsSQL, [
+      asOfDate,
+      metal,
+      tenorMonths,
+      price,
+      real10yr,
+      dxy,
+      deficitFlag,
+    ]);
+
+    await client.query(insertHistoryMetalsSQL, [
+      asOfDate,
+      metal,
+      tenorMonths,
+      price,
+      real10yr,
+      dxy,
+      deficitFlag,
+    ]);
+
+    processed++;
+  }
+
+  logger.log(
+    `Metals load complete: processed=${processed}, skipped=${skipped}`
+  );
+
+  return { processed, skipped };
+}
+
+// ----- Main handler -----
+export default async function handler(req, res) {
+  const started = Date.now();
+  const fromCron = req.query.tag || null;
+
+  const client = new Client({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
+  });
+
+  try {
+    await client.connect();
+
+    const pricesResult = await loadPricesFromSheet(client);
+    const metalsResult = await loadMetalsCurveFromSheet(client);
+
+    const runtimeMs = Date.now() - started;
+
+    return res.status(200).json({
+      ok: true,
+      message: "Prices and metals ingested",
+      pricesResult,
+      metalsResult,
+      runtime_ms: runtimeMs,
+      tag: fromCron || null,
+    });
+  } catch (err) {
+    console.error("run.js error:", err);
+    return res.status(500).json({ ok: false, error: String(err) });
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
