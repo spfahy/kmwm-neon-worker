@@ -280,6 +280,91 @@ async function loadMetalsCurveFromSheet(client, logger = console) {
 
   return { processed, skipped };
 }
+// ----- Live metals spot overlay (GC=F, SI=F from Yahoo Finance) -----
+async function loadLiveMetalsSpot(client, logger = console) {
+  const yahooUrl =
+    "https://query1.finance.yahoo.com/v7/finance/quote?symbols=GC=F,SI=F";
+
+  logger.log("Fetching live metals spot from:", yahooUrl);
+
+  let json;
+  try {
+    const res = await fetch(yahooUrl, { cache: "no-store" });
+    if (!res.ok) {
+      throw new Error(`Yahoo quote HTTP ${res.status}`);
+    }
+    json = await res.json();
+  } catch (err) {
+    throw new Error(`Live metals fetch failed: ${String(err)}`);
+  }
+
+  const results =
+    (json && json.quoteResponse && json.quoteResponse.result) || [];
+
+  const prices = {
+    gold: null,
+    silver: null,
+  };
+
+  for (const q of results) {
+    if (!q || !q.symbol) continue;
+    if (q.symbol === "GC=F") {
+      prices.gold = q.regularMarketPrice;
+    } else if (q.symbol === "SI=F") {
+      prices.silver = q.regularMarketPrice;
+    }
+  }
+
+  let processed = 0;
+
+  // Helper to upsert one metal
+  async function upsertSpot(metalKey, metalName) {
+    const price = prices[metalKey];
+    if (price == null || !isFinite(price)) {
+      logger.warn(`No live price for ${metalName}, skipping`);
+      return;
+    }
+
+    logger.log(`Updating live spot for ${metalName}: ${price}`);
+
+    // Upsert into latest: tenor_months = 0
+    await client.query(
+      `
+      INSERT INTO metals_curve_latest (
+        as_of_date, metal, tenor_months, price,
+        real_10yr_yld, dollar_index, deficit_gdp_flag
+      )
+      VALUES (current_date, $1, 0, $2, NULL, NULL, NULL)
+      ON CONFLICT (metal, tenor_months)
+      DO UPDATE SET
+        as_of_date = EXCLUDED.as_of_date,
+        price      = EXCLUDED.price,
+        updated_at = now();
+      `,
+      [metalName, price]
+    );
+
+    // Append a simple history row
+    await client.query(
+      `
+      INSERT INTO metals_curve_history (
+        as_of_date, metal, tenor_months, price,
+        real_10yr_yld, dollar_index, deficit_gdp_flag
+      )
+      VALUES (current_date, $1, 0, $2, NULL, NULL, NULL);
+      `,
+      [metalName, price]
+    );
+
+    processed++;
+  }
+
+  await upsertSpot("gold", "gold");
+  await upsertSpot("silver", "silver");
+
+  logger.log(`Live metals overlay done: processed=${processed}`);
+  return { processed };
+}
 
 // ----- Main handler -----
 export default async function handler(req, res) {
@@ -296,17 +381,20 @@ export default async function handler(req, res) {
 
     const pricesResult = await loadPricesFromSheet(client);
     const metalsResult = await loadMetalsCurveFromSheet(client);
+    const liveMetalsResult = await loadLiveMetalsSpot(client);
 
     const runtimeMs = Date.now() - started;
 
     return res.status(200).json({
-      ok: true,
-      message: "Prices and metals ingested",
-      pricesResult,
-      metalsResult,
-      runtime_ms: runtimeMs,
-      tag: fromCron || null,
-    });
+  ok: true,
+  message: "Prices and metals ingested (with live spot overlay)",
+  pricesResult,
+  metalsResult,
+  liveMetalsResult,
+  runtime_ms: runtimeMs,
+  tag: fromCron || null,
+});
+
   } catch (err) {
     console.error("run.js error:", err);
     return res.status(500).json({ ok: false, error: String(err) });
@@ -314,3 +402,4 @@ export default async function handler(req, res) {
     await client.end().catch(() => {});
   }
 }
+
