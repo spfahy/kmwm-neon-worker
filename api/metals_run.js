@@ -15,6 +15,12 @@ function getTodayCT() {
   return `${y}-${m}-${d}`;
 }
 
+// Strip surrounding quotes and whitespace
+function cleanField(value) {
+  if (value == null) return "";
+  return value.replace(/^"|"$/g, "").trim();
+}
+
 // Log status in metals_ingest_log
 async function logIngest(client, runDate, source, status, reason, rowCount) {
   if (!client) {
@@ -49,7 +55,10 @@ function parseMetalsCsv(text) {
   const lines = text.trim().split(/\r?\n/);
   if (lines.length < 2) return [];
 
-  const header = lines[0].split(",");
+  // Clean the header fields (strip quotes + spaces)
+  const headerRaw = lines[0].split(",");
+  const header = headerRaw.map(cleanField);
+
   const idx = {
     as_of_date: header.indexOf("As Of Date"),
     metal: header.indexOf("Metal"),
@@ -70,6 +79,7 @@ function parseMetalsCsv(text) {
     idx.dollar_index < 0 ||
     idx.deficit_gdp_flag < 0
   ) {
+    console.error("Header mismatch in Metals CSV:", header);
     return [];
   }
 
@@ -79,18 +89,37 @@ function parseMetalsCsv(text) {
     const line = lines[i].trim();
     if (!line) continue;
 
-    const cols = line.split(",");
-    const asOf = cols[idx.as_of_date]?.trim();
+    const rawCols = line.split(",");
+    const cols = rawCols.map(cleanField);
+
+    const asOf = cols[idx.as_of_date];
     if (!asOf) continue;
+
+    const tenorStr = cols[idx.tenor_months];
+    const priceStr = cols[idx.price];
+    const realStr = cols[idx.real_10yr_yld];
+    const dxStr = cols[idx.dollar_index];
+    const deficitStr = cols[idx.deficit_gdp_flag];
+
+    const tenor = parseInt(tenorStr, 10);
+    const price = parseFloat(priceStr);
+    const real = parseFloat(realStr);
+    const dx = parseFloat(dxStr);
+    const deficit = parseInt(deficitStr, 10);
+
+    if (!Number.isFinite(tenor) || !Number.isFinite(price)) {
+      // Skip clearly bad rows
+      continue;
+    }
 
     rows.push({
       as_of_date: asOf, // must be YYYY-MM-DD in the sheet
-      metal: cols[idx.metal]?.trim().toLowerCase(),
-      tenor_months: parseInt(cols[idx.tenor_months], 10),
-      price: parseFloat(cols[idx.price]),
-      real_10yr_yld: parseFloat(cols[idx.real_10yr_yld]),
-      dollar_index: parseFloat(cols[idx.dollar_index]),
-      deficit_gdp_flag: parseInt(cols[idx.deficit_gdp_flag], 10),
+      metal: cols[idx.metal]?.toLowerCase(),
+      tenor_months: tenor,
+      price,
+      real_10yr_yld: real,
+      dollar_index: dx,
+      deficit_gdp_flag: Number.isFinite(deficit) ? deficit : 0,
     });
   }
 
