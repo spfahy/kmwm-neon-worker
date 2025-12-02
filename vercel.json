@@ -7,10 +7,10 @@
     { "src": "api/dbinfo.js",        "use": "@vercel/node" }
   ],
   "routes": [
-    { "src": "/api/run",            "dest": "/api/run.js" },
-    { "src": "/api/load-positions","dest": "/api/load-positions.js" },
-    { "src": "/api/ping",          "dest": "/api/ping.js" },
-    { "src": "/api/dbinfo",        "dest": "/api/dbinfo.js" }
+    { "src": "/api/run",             "dest": "/api/run.js" },
+    { "src": "/api/load-positions", "dest": "/api/load-positions.js" },
+    { "src": "/api/ping",           "dest": "/api/ping.js" },
+    { "src": "/api/dbinfo",         "dest": "/api/dbinfo.js" }
   ],
   "crons": [
     {
