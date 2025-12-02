@@ -1,16 +1,18 @@
 {
   "version": 2,
   "builds": [
-    { "src": "api/run.js",           "use": "@vercel/node" },
-    { "src": "api/load-positions.js","use": "@vercel/node" },
-    { "src": "api/ping.js",          "use": "@vercel/node" },
-    { "src": "api/dbinfo.js",        "use": "@vercel/node" }
+    { "src": "api/run.js",            "use": "@vercel/node" },
+    { "src": "api/load-positions.js", "use": "@vercel/node" },
+    { "src": "api/ping.js",           "use": "@vercel/node" },
+    { "src": "api/dbinfo.js",         "use": "@vercel/node" },
+    { "src": "api/metals_run.js",     "use": "@vercel/node" }
   ],
   "routes": [
     { "src": "/api/run",             "dest": "/api/run.js" },
-    { "src": "/api/load-positions", "dest": "/api/load-positions.js" },
-    { "src": "/api/ping",           "dest": "/api/ping.js" },
-    { "src": "/api/dbinfo",         "dest": "/api/dbinfo.js" }
+    { "src": "/api/load-positions",  "dest": "/api/load-positions.js" },
+    { "src": "/api/ping",            "dest": "/api/ping.js" },
+    { "src": "/api/dbinfo",          "dest": "/api/dbinfo.js" },
+    { "src": "/api/metals_run",      "dest": "/api/metals_run.js" }
   ],
   "crons": [
     {
