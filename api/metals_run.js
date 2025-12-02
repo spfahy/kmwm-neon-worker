@@ -17,6 +17,23 @@ function getTodayCT() {
 
 // Log status in metals_ingest_log
 async function logIngest(client, runDate, source, status, reason, rowCount) {
+  if (!client) {
+    // Best-effort logging without a transaction if we have no client
+    try {
+      await pool.query(
+        `
+        INSERT INTO metals_ingest_log
+          (run_timestamp, run_date, trigger_source, status, error_reason, row_count)
+        VALUES (NOW(), $1, $2, $3, $4, $5)
+        `,
+        [runDate, source, status, reason, rowCount]
+      );
+    } catch (e) {
+      console.error("Failed to log ingest without client:", e);
+    }
+    return;
+  }
+
   await client.query(
     `
     INSERT INTO metals_ingest_log
@@ -91,9 +108,12 @@ module.exports = async (req, res) => {
   const force = String(req.query.force || "0") === "1";
 
   const todayStr = getTodayCT();
-  const client = await pool.connect();
+  let client = null;
 
   try {
+    // Connect to the database INSIDE the try so any connection error is caught
+    client = await pool.connect();
+
     // 1) Check if a successful ingest already happened today
     const existing = await client.query(
       `
@@ -115,6 +135,11 @@ module.exports = async (req, res) => {
 
     // 2) Fetch CSV from Metals Sheet
     const csvUrl = process.env.METALS_CSV_URL;
+    if (!csvUrl) {
+      await logIngest(client, todayStr, source, "error", "missing_METALS_CSV_URL", 0);
+      return res.status(500).json({ error: "missing_METALS_CSV_URL" });
+    }
+
     const resp = await fetch(csvUrl);
     if (!resp.ok) {
       await logIngest(client, todayStr, source, "error", "fetch_failed", 0);
@@ -221,11 +246,30 @@ module.exports = async (req, res) => {
       trigger_source: source,
     });
   } catch (e) {
-    await client.query("ROLLBACK");
-    console.error(e);
-    await logIngest(client, todayStr, source, "error", "unhandled_exception", 0);
+    console.error("metals_run error:", e);
+
+    // Try to roll back if we had a transaction open
+    if (client) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (rollbackErr) {
+        console.error("Rollback failed:", rollbackErr);
+      }
+      // Best-effort error log
+      try {
+        await logIngest(client, todayStr, source, "error", "unhandled_exception", 0);
+      } catch (logErr) {
+        console.error("Failed to log error:", logErr);
+      }
+    } else {
+      // No client: best-effort log using pool
+      await logIngest(null, todayStr, source, "error", "unhandled_exception_no_client", 0);
+    }
+
     return res.status(500).json({ error: "unhandled_exception" });
   } finally {
-    client.release();
+    if (client) {
+      client.release();
+    }
   }
 };
