@@ -1,4 +1,4 @@
-const { Pool } = require("pg");
+import { Pool } from "pg";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -18,7 +18,7 @@ function getTodayCT() {
 // Log status in metals_ingest_log
 async function logIngest(client, runDate, source, status, reason, rowCount) {
   if (!client) {
-    // Best-effort logging without a transaction if we have no client
+    // Best-effort logging if we don't have a client from a transaction
     try {
       await pool.query(
         `
@@ -97,7 +97,7 @@ function parseMetalsCsv(text) {
   return rows;
 }
 
-module.exports = async (req, res) => {
+export default async function metalsRun(req, res) {
   const auth = req.headers.authorization || "";
   const token = auth.replace("Bearer ", "");
   if (token !== process.env.METALS_INGEST_TOKEN) {
@@ -111,7 +111,7 @@ module.exports = async (req, res) => {
   let client = null;
 
   try {
-    // Connect to the database INSIDE the try so any connection error is caught
+    // Connect to the database inside try so any connection error is caught
     client = await pool.connect();
 
     // 1) Check if a successful ingest already happened today
@@ -248,21 +248,18 @@ module.exports = async (req, res) => {
   } catch (e) {
     console.error("metals_run error:", e);
 
-    // Try to roll back if we had a transaction open
     if (client) {
       try {
         await client.query("ROLLBACK");
       } catch (rollbackErr) {
         console.error("Rollback failed:", rollbackErr);
       }
-      // Best-effort error log
       try {
         await logIngest(client, todayStr, source, "error", "unhandled_exception", 0);
       } catch (logErr) {
         console.error("Failed to log error:", logErr);
       }
     } else {
-      // No client: best-effort log using pool
       await logIngest(null, todayStr, source, "error", "unhandled_exception_no_client", 0);
     }
 
@@ -272,4 +269,4 @@ module.exports = async (req, res) => {
       client.release();
     }
   }
-};
+}
