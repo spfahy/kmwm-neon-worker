@@ -20,6 +20,29 @@ function cleanField(value) {
   if (value == null) return "";
   return value.replace(/^"|"$/g, "").trim();
 }
+const tenor = parseInt(tenorStr, 10);
+const price = parseFloat(priceStr);
+const real = parseFloat(realStr);
+const dx = parseFloat(dxStr);
+const deficit = parseInt(deficitStr, 10);
+
+// Require tenor to be numeric
+if (!Number.isFinite(tenor)) {
+  continue;
+}
+
+// Price fallback: allow bad prices instead of skipping row
+const safePrice = Number.isFinite(price) ? price : 0.0;
+
+rows.push({
+  as_of_date: asOf,
+  metal: cols[idx.metal]?.toLowerCase(),
+  tenor_months: tenor,
+  price: safePrice,
+  real_10yr_yld: Number.isFinite(real) ? real : null,
+  dollar_index: Number.isFinite(dx) ? dx : null,
+  deficit_gdp_flag: Number.isFinite(deficit) ? deficit : 0,
+});
 
 // Log status in metals_ingest_log
 async function logIngest(client, runDate, source, status, reason, rowCount) {
