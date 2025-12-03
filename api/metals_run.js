@@ -1,6 +1,6 @@
 // api/metals_run.js
 
-// Use ES module import so it works in "type": "module" / ESM environments
+// ES module import for pg (required by Vercel's ESM runtime)
 import pg from "pg";
 
 const { Pool } = pg;
@@ -53,6 +53,7 @@ function parseCsvLine(line) {
     const ch = line[i];
 
     if (ch === '"') {
+      // Escaped quote ("")
       if (inQuotes && i + 1 < line.length && line[i + 1] === '"') {
         cur += '"';
         i++;
@@ -67,26 +68,25 @@ function parseCsvLine(line) {
     }
   }
   out.push(cur);
-
   return out;
 }
 
 // Trim and strip wrapping quotes
 function cleanField(value) {
-  // Turn a numeric-looking string into a number, stripping commas
-function toNumber(value) {
-  if (value == null) return null;
-  const cleaned = String(value).replace(/,/g, "").trim();
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : null;
-}
-
   if (value == null) return "";
   let v = String(value).trim();
   if (v.startsWith('"') && v.endsWith('"')) {
     v = v.slice(1, -1);
   }
   return v.trim();
+}
+
+// Turn a numeric-looking string into a number, stripping commas
+function toNumber(value) {
+  if (value == null) return null;
+  const cleaned = String(value).replace(/,/g, "").trim(); // "4,235.10" -> "4235.10"
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
 }
 
 // --------------------------------------------------
@@ -96,7 +96,7 @@ function parseMetalsCsv(text) {
   const lines = text.trim().split(/\r?\n/);
   if (lines.length < 2) return [];
 
-  // Header
+  // Header row
   const headerRaw = parseCsvLine(lines[0]);
   const header = headerRaw.map(cleanField);
 
@@ -120,6 +120,7 @@ function parseMetalsCsv(text) {
     idx.dollar_index < 0 ||
     idx.deficit_gdp_flag < 0
   ) {
+    console.error("Metals CSV header mismatch:", header);
     return [];
   }
 
@@ -127,7 +128,7 @@ function parseMetalsCsv(text) {
 
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim();
-    if (!line) continue;
+    if (!line) continue; // skip blank lines
 
     const colsRaw = parseCsvLine(line);
     const cols = colsRaw.map(cleanField);
@@ -142,12 +143,13 @@ function parseMetalsCsv(text) {
 
     if (!asOf || !metal) continue;
 
-    const tenor = Number(tenorStr);
-    const price = Number(priceStr);
-    const real = Number(realStr);
-    const dx = Number(dxStr);
-    const deficit = Number(deficitStr);
+    const tenor = toNumber(tenorStr);
+    const price = toNumber(priceStr);
+    const real = toNumber(realStr);
+    const dx = toNumber(dxStr);
+    const deficit = toNumber(deficitStr);
 
+    // Tenor must be valid; other numeric fields we can default
     if (!Number.isFinite(tenor)) continue;
 
     const safePrice = Number.isFinite(price) ? price : 0.0;
@@ -170,7 +172,7 @@ function parseMetalsCsv(text) {
 }
 
 // --------------------------------------------------
-// Main handler – ES module default export
+// Main handler – default export for Vercel
 // --------------------------------------------------
 export default async function handler(req, res) {
   const auth = req.headers.authorization || "";
@@ -223,7 +225,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // 2) Fetch CSV
+    // 2) Fetch CSV from Metals sheet
     const csvUrl = process.env.METALS_CSV_URL;
     if (!csvUrl) {
       await logIngest(
@@ -264,7 +266,8 @@ export default async function handler(req, res) {
 
     // 3) Date validation
     const uniqueDates = [...new Set(rows.map((r) => r.as_of_date))];
-    let sheetDate = uniqueDates.length === 1 ? uniqueDates[0] : null;
+    let sheetDate =
+      uniqueDates.length === 1 ? uniqueDates[0] : null;
 
     if (!force) {
       if (!sheetDate) {
@@ -300,7 +303,7 @@ export default async function handler(req, res) {
         });
       }
     } else {
-      // Force mode: override all dates
+      // Force mode: override all dates to today
       sheetDate = todayStr;
       for (const r of rows) {
         r.as_of_date = todayStr;
@@ -310,6 +313,7 @@ export default async function handler(req, res) {
     // 4) Write to Neon
     await client.query("BEGIN");
 
+    // Upsert latest curve
     for (const r of rows) {
       await client.query(
         `
@@ -338,6 +342,7 @@ export default async function handler(req, res) {
       );
     }
 
+    // Append to history
     for (const r of rows) {
       await client.query(
         `
@@ -372,7 +377,7 @@ export default async function handler(req, res) {
     try {
       await client.query("ROLLBACK");
     } catch {
-      // ignore
+      // ignore rollback error
     }
     await logIngest(
       client,
