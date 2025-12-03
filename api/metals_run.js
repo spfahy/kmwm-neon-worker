@@ -1,8 +1,11 @@
-import { Pool } from "pg";
+const { Pool } = require("pg");
 
+// Use Neon / Postgres via pooled connection
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
+
+// --- Helpers ------------------------------------------------------
 
 // Get today's date in America/Chicago as YYYY-MM-DD
 function getTodayCT() {
@@ -15,62 +18,60 @@ function getTodayCT() {
   return `${y}-${m}-${d}`;
 }
 
-// Strip surrounding quotes and whitespace
-function cleanField(value) {
-  if (value == null) return "";
-  return value.replace(/^"|"$/g, "").trim();
-}
-const tenor = parseInt(tenorStr, 10);
-const price = parseFloat(priceStr);
-const real = parseFloat(realStr);
-const dx = parseFloat(dxStr);
-const deficit = parseInt(deficitStr, 10);
-
-// Require tenor to be numeric
-if (!Number.isFinite(tenor)) {
-  continue;
-}
-
-// Price fallback: allow bad prices instead of skipping row
-const safePrice = Number.isFinite(price) ? price : 0.0;
-
-rows.push({
-  as_of_date: asOf,
-  metal: cols[idx.metal]?.toLowerCase(),
-  tenor_months: tenor,
-  price: safePrice,
-  real_10yr_yld: Number.isFinite(real) ? real : null,
-  dollar_index: Number.isFinite(dx) ? dx : null,
-  deficit_gdp_flag: Number.isFinite(deficit) ? deficit : 0,
-});
-
 // Log status in metals_ingest_log
 async function logIngest(client, runDate, source, status, reason, rowCount) {
-  if (!client) {
-    // Best-effort logging if we don't have a client from a transaction
-    try {
-      await pool.query(
-        `
-        INSERT INTO metals_ingest_log
-          (run_timestamp, run_date, trigger_source, status, error_reason, row_count)
-        VALUES (NOW(), $1, $2, $3, $4, $5)
-        `,
-        [runDate, source, status, reason, rowCount]
-      );
-    } catch (e) {
-      console.error("Failed to log ingest without client:", e);
+  try {
+    await client.query(
+      `
+      INSERT INTO metals_ingest_log
+        (run_timestamp, run_date, trigger_source, status, error_reason, row_count)
+      VALUES (NOW(), $1, $2, $3, $4, $5)
+      `,
+      [runDate, source, status, reason, rowCount]
+    );
+  } catch (err) {
+    // Do not let logging kill the request
+    console.error("Failed to log metals ingest:", err);
+  }
+}
+
+// Basic CSV line parser that handles quoted fields and commas inside quotes
+function parseCsvLine(line) {
+  const result = [];
+  let field = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+
+    if (ch === '"') {
+      // Handle escaped quotes ("")
+      if (inQuotes && i + 1 < line.length && line[i + 1] === '"') {
+        field += '"';
+        i++; // skip the second quote
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === "," && !inQuotes) {
+      result.push(field);
+      field = "";
+    } else {
+      field += ch;
     }
-    return;
   }
 
-  await client.query(
-    `
-    INSERT INTO metals_ingest_log
-      (run_timestamp, run_date, trigger_source, status, error_reason, row_count)
-    VALUES (NOW(), $1, $2, $3, $4, $5)
-    `,
-    [runDate, source, status, reason, rowCount]
-  );
+  result.push(field);
+  return result;
+}
+
+// Trim and strip outer quotes from a CSV field
+function cleanField(value) {
+  if (value == null) return "";
+  let v = String(value).trim();
+  if (v.startsWith('"') && v.endsWith('"')) {
+    v = v.slice(1, -1);
+  }
+  return v.trim();
 }
 
 // Parse Metals CSV from the Google Sheet
@@ -78,8 +79,8 @@ function parseMetalsCsv(text) {
   const lines = text.trim().split(/\r?\n/);
   if (lines.length < 2) return [];
 
-  // Clean the header fields (strip quotes + spaces)
-  const headerRaw = lines[0].split(",");
+  // Parse and clean header fields
+  const headerRaw = parseCsvLine(lines[0]);
   const header = headerRaw.map(cleanField);
 
   const idx = {
@@ -92,7 +93,7 @@ function parseMetalsCsv(text) {
     deficit_gdp_flag: header.indexOf("Deficit GDP Flag"),
   };
 
-  // If any required column is missing, bail
+  // If any required column is missing, bail out
   if (
     idx.as_of_date < 0 ||
     idx.metal < 0 ||
@@ -102,27 +103,27 @@ function parseMetalsCsv(text) {
     idx.dollar_index < 0 ||
     idx.deficit_gdp_flag < 0
   ) {
-    console.error("Header mismatch in Metals CSV:", header);
     return [];
   }
 
   const rows = [];
 
   for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
+    const rawLine = lines[i].trim();
+    if (!rawLine) continue;
 
-    const rawCols = line.split(",");
-    const cols = rawCols.map(cleanField);
+    const colsRaw = parseCsvLine(rawLine);
+    const cols = colsRaw.map(cleanField);
 
     const asOf = cols[idx.as_of_date];
-    if (!asOf) continue;
-
+    const metal = cols[idx.metal]?.toLowerCase();
     const tenorStr = cols[idx.tenor_months];
     const priceStr = cols[idx.price];
     const realStr = cols[idx.real_10yr_yld];
     const dxStr = cols[idx.dollar_index];
     const deficitStr = cols[idx.deficit_gdp_flag];
+
+    if (!asOf || !metal) continue;
 
     const tenor = parseInt(tenorStr, 10);
     const price = parseFloat(priceStr);
@@ -130,18 +131,21 @@ function parseMetalsCsv(text) {
     const dx = parseFloat(dxStr);
     const deficit = parseInt(deficitStr, 10);
 
-    if (!Number.isFinite(tenor) || !Number.isFinite(price)) {
-      // Skip clearly bad rows
+    // Require tenor to be numeric; otherwise curve point is meaningless
+    if (!Number.isFinite(tenor)) {
       continue;
     }
 
+    // Be forgiving on price: if it is not clean, fall back to 0.0
+    const safePrice = Number.isFinite(price) ? price : 0.0;
+
     rows.push({
-      as_of_date: asOf, // must be YYYY-MM-DD in the sheet
-      metal: cols[idx.metal]?.toLowerCase(),
+      as_of_date: asOf, // will be overridden in force mode
+      metal,
       tenor_months: tenor,
-      price,
-      real_10yr_yld: real,
-      dollar_index: dx,
+      price: safePrice,
+      real_10yr_yld: Number.isFinite(real) ? real : null,
+      dollar_index: Number.isFinite(dx) ? dx : null,
       deficit_gdp_flag: Number.isFinite(deficit) ? deficit : 0,
     });
   }
@@ -149,9 +153,18 @@ function parseMetalsCsv(text) {
   return rows;
 }
 
-export default async function metalsRun(req, res) {
+// --- Main handler -------------------------------------------------
+
+module.exports = async (req, res) => {
   const auth = req.headers.authorization || "";
-  const token = auth.replace("Bearer ", "");
+  const token = auth.replace("Bearer ", "").trim();
+
+  if (!process.env.METALS_INGEST_TOKEN) {
+    return res
+      .status(500)
+      .json({ error: "METALS_INGEST_TOKEN not configured in environment" });
+  }
+
   if (token !== process.env.METALS_INGEST_TOKEN) {
     return res.status(401).json({ error: "unauthorized" });
   }
@@ -160,12 +173,9 @@ export default async function metalsRun(req, res) {
   const force = String(req.query.force || "0") === "1";
 
   const todayStr = getTodayCT();
-  let client = null;
+  const client = await pool.connect();
 
   try {
-    // Connect to the database inside try so any connection error is caught
-    client = await pool.connect();
-
     // 1) Check if a successful ingest already happened today
     const existing = await client.query(
       `
@@ -180,16 +190,37 @@ export default async function metalsRun(req, res) {
 
     const hasSuccessToday = existing.rows.length > 0;
 
+    // If cron and we already ingested successfully today, skip unless force=1
     if (source.startsWith("cron") && hasSuccessToday && !force) {
-      await logIngest(client, todayStr, source, "skipped", "already_ingested_today", 0);
-      return res.json({ ok: true, skipped: true, reason: "already_ingested_today" });
+      await logIngest(
+        client,
+        todayStr,
+        source,
+        "skipped",
+        "already_ingested_today",
+        0
+      );
+      return res.json({
+        ok: true,
+        skipped: true,
+        reason: "already_ingested_today",
+      });
     }
 
     // 2) Fetch CSV from Metals Sheet
     const csvUrl = process.env.METALS_CSV_URL;
     if (!csvUrl) {
-      await logIngest(client, todayStr, source, "error", "missing_METALS_CSV_URL", 0);
-      return res.status(500).json({ error: "missing_METALS_CSV_URL" });
+      await logIngest(
+        client,
+        todayStr,
+        source,
+        "error",
+        "METALS_CSV_URL_not_configured",
+        0
+      );
+      return res
+        .status(500)
+        .json({ error: "METALS_CSV_URL not configured in environment" });
     }
 
     const resp = await fetch(csvUrl);
@@ -202,7 +233,14 @@ export default async function metalsRun(req, res) {
     const rows = parseMetalsCsv(csvText);
 
     if (!rows.length) {
-      await logIngest(client, todayStr, source, "error", "no_rows_in_sheet_or_bad_headers", 0);
+      await logIngest(
+        client,
+        todayStr,
+        source,
+        "error",
+        "no_rows_in_sheet_or_bad_headers",
+        0
+      );
       return res
         .status(400)
         .json({ error: "no_rows_in_sheet_or_bad_headers" });
@@ -210,31 +248,52 @@ export default async function metalsRun(req, res) {
 
     // 3) Date validation
     const uniqueDates = [...new Set(rows.map((r) => r.as_of_date))];
-    if (uniqueDates.length !== 1) {
-      await logIngest(
-        client,
-        todayStr,
-        source,
-        "error",
-        "multiple_as_of_dates_in_sheet",
-        rows.length
-      );
-      return res
-        .status(400)
-        .json({ error: "multiple_as_of_dates_in_sheet", uniqueDates });
+    let sheetDate = null;
+
+    if (uniqueDates.length === 1) {
+      sheetDate = uniqueDates[0];
     }
 
-    const sheetDate = uniqueDates[0];
+    if (!force) {
+      // Normal strict mode
+      if (!sheetDate) {
+        await logIngest(
+          client,
+          todayStr,
+          source,
+          "error",
+          "multiple_as_of_dates_in_sheet",
+          rows.length
+        );
+        return res.status(400).json({
+          error: "multiple_as_of_dates_in_sheet",
+          uniqueDates,
+        });
+      }
 
-    if (sheetDate !== todayStr && !force) {
-      const reason = `sheet_date_mismatch: sheet=${sheetDate}, expected=${todayStr}`;
-      await logIngest(client, todayStr, source, "error", reason, rows.length);
+      if (sheetDate !== todayStr) {
+        const reason = `sheet_date_mismatch: sheet=${sheetDate}, expected=${todayStr}`;
+        await logIngest(
+          client,
+          todayStr,
+          source,
+          "error",
+          reason,
+          rows.length
+        );
 
-      return res.status(400).json({
-        error: "sheet_date_mismatch",
-        sheetDate,
-        expectedDate: todayStr,
-      });
+        return res.status(400).json({
+          error: "sheet_date_mismatch",
+          sheetDate,
+          expectedDate: todayStr,
+        });
+      }
+    } else {
+      // FORCE MODE: override all dates with today's date
+      sheetDate = todayStr;
+      for (const r of rows) {
+        r.as_of_date = todayStr;
+      }
     }
 
     // 4) Ingest into Neon
@@ -288,8 +347,8 @@ export default async function metalsRun(req, res) {
       );
     }
 
-    await logIngest(client, todayStr, source, "success", null, rows.length);
     await client.query("COMMIT");
+    await logIngest(client, todayStr, source, "success", null, rows.length);
 
     return res.json({
       ok: true,
@@ -299,26 +358,21 @@ export default async function metalsRun(req, res) {
     });
   } catch (e) {
     console.error("metals_run error:", e);
-
-    if (client) {
-      try {
-        await client.query("ROLLBACK");
-      } catch (rollbackErr) {
-        console.error("Rollback failed:", rollbackErr);
-      }
-      try {
-        await logIngest(client, todayStr, source, "error", "unhandled_exception", 0);
-      } catch (logErr) {
-        console.error("Failed to log error:", logErr);
-      }
-    } else {
-      await logIngest(null, todayStr, source, "error", "unhandled_exception_no_client", 0);
+    try {
+      await client.query("ROLLBACK");
+    } catch (_) {
+      // ignore rollback error
     }
-
+    await logIngest(
+      client,
+      todayStr,
+      source,
+      "error",
+      "unhandled_exception",
+      0
+    );
     return res.status(500).json({ error: "unhandled_exception" });
   } finally {
-    if (client) {
-      client.release();
-    }
+    client.release();
   }
-}
+};
