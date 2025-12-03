@@ -73,6 +73,14 @@ function parseCsvLine(line) {
 
 // Trim and strip wrapping quotes
 function cleanField(value) {
+  // Turn a numeric-looking string into a number, stripping commas
+function toNumber(value) {
+  if (value == null) return null;
+  const cleaned = String(value).replace(/,/g, "").trim();
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
   if (value == null) return "";
   let v = String(value).trim();
   if (v.startsWith('"') && v.endsWith('"')) {
