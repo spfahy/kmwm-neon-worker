@@ -312,6 +312,17 @@ export default async function handler(req, res) {
 
     // 4) Write to Neon
     await client.query("BEGIN");
+    
+        // Remove any existing rows for this as_of_date so old tenors (like 24m)
+    // cannot hang around once they are removed from the sheet.
+    await client.query(
+      `
+      DELETE FROM metals_curve_latest
+      WHERE as_of_date = $1
+      `,
+      [sheetDate]
+    );
+
 
     // Upsert latest curve
     for (const r of rows) {
