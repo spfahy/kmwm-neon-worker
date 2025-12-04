@@ -30,14 +30,23 @@ function getTodayCT() {
 // Log status in metals_ingest_log
 async function logIngest(client, runDate, source, status, reason, rowCount) {
   try {
-    await client.query(
-      `
-      INSERT INTO metals_ingest_log
-        (run_timestamp, run_date, trigger_source, status, error_reason, row_count)
-      VALUES (NOW(), $1, $2, $3, $4, $5)
-      `,
-      [runDate, source, status, reason, rowCount]
-    );
+   await client.query(
+  `
+    INSERT INTO metals_curve_history
+      (as_of_date, metal, tenor_months, price,
+       real_10yr_yld, dollar_index, deficit_gdp_flag, inserted_at)
+    VALUES ($1,$2,$3,$4,$5,$6,$7, NOW())
+    ON CONFLICT (as_of_date, metal, tenor_months)
+    DO UPDATE SET
+      price = EXCLUDED.price,
+      real_10yr_yld = EXCLUDED.real_10yr_yld,
+      dollar_index = EXCLUDED.dollar_index,
+      deficit_gdp_flag = EXCLUDED.deficit_gdp_flag,
+      inserted_at = NOW()
+  `,
+  [...]
+);
+
   } catch (err) {
     console.error("Failed to log metals ingest:", err);
   }
