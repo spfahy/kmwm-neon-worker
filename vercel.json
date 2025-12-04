@@ -1,16 +1,23 @@
 {
   "version": 2,
   "builds": [
-    { "src": "next.config.js", "use": "@vercel/next" },
-
-    { "src": "api/run.js", "use": "@vercel/node" },
-    { "src": "api/load-positions.js", "use": "@vercel/node" },
-    { "src": "api/ping.js", "use": "@vercel/node" },
-    { "src": "api/dbinfo.js", "use": "@vercel/node" },
-    { "src": "api/dbtest.js", "use": "@vercel/node" },
-    { "src": "api/health.js", "use": "@vercel/node" },
-    { "src": "api/envcheck.js", "use": "@vercel/node" },
-    { "src": "api/metals_run.js", "use": "@vercel/node" },
-    { "src": "api/metals_status.js", "use": "@vercel/node" }
+    {
+      "src": "index.html",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "api/*.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/",
+      "dest": "/index.html"
+    },
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/$1.js"
+    }
   ]
 }
