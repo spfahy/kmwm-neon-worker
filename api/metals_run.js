@@ -30,27 +30,19 @@ function getTodayCT() {
 // Log status in metals_ingest_log
 async function logIngest(client, runDate, source, status, reason, rowCount) {
   try {
-   await client.query(
-  `
-    INSERT INTO metals_curve_history
-      (as_of_date, metal, tenor_months, price,
-       real_10yr_yld, dollar_index, deficit_gdp_flag, inserted_at)
-    VALUES ($1,$2,$3,$4,$5,$6,$7, NOW())
-    ON CONFLICT (as_of_date, metal, tenor_months)
-    DO UPDATE SET
-      price = EXCLUDED.price,
-      real_10yr_yld = EXCLUDED.real_10yr_yld,
-      dollar_index = EXCLUDED.dollar_index,
-      deficit_gdp_flag = EXCLUDED.deficit_gdp_flag,
-      inserted_at = NOW()
-  `,
-  [...]
-);
-
+    await client.query(
+      `
+      INSERT INTO metals_ingest_log
+        (run_date, source, status, reason, row_count, logged_at)
+      VALUES ($1, $2, $3, $4, $5, NOW())
+      `,
+      [runDate, source, status, reason, rowCount]
+    );
   } catch (err) {
     console.error("Failed to log metals ingest:", err);
   }
 }
+
 
 // Parse a single CSV line, handling quotes and commas in quotes
 function parseCsvLine(line) {
