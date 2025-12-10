@@ -71,14 +71,24 @@ function parseCsvLine(line) {
   return out;
 }
 
-// Trim and strip wrapping quotes
+// Trim and strip wrapping quotes + BOM
 function cleanField(value) {
   if (value == null) return "";
-  let v = String(value).trim();
+  let v = String(value);
+
+  // Remove UTF-8 BOM if present
+  v = v.replace(/^\uFEFF/, "");
+
+  v = v.trim();
   if (v.startsWith('"') && v.endsWith('"')) {
     v = v.slice(1, -1);
   }
   return v.trim();
+}
+
+// Normalize header names: lowercase, compress spaces
+function normalizeHeaderName(name) {
+  return cleanField(name).toLowerCase().replace(/\s+/g, " ");
 }
 
 // Turn a numeric-looking string into a number, stripping commas
@@ -99,15 +109,21 @@ function parseMetalsCsv(text) {
   // Header row
   const headerRaw = parseCsvLine(lines[0]);
   const header = headerRaw.map(cleanField);
+  const headerNorm = header.map(normalizeHeaderName);
+
+  function findHeader(target) {
+    const t = target.toLowerCase();
+    return headerNorm.indexOf(t);
+  }
 
   const idx = {
-    as_of_date: header.indexOf("As Of Date"),
-    metal: header.indexOf("Metal"),
-    tenor_months: header.indexOf("Tenor Months"),
-    price: header.indexOf("Price"),
-    real_10yr_yld: header.indexOf("10 Yr Real Yld"),
-    dollar_index: header.indexOf("Dollar Index"),
-    deficit_gdp_flag: header.indexOf("Deficit GDP Flag"),
+    as_of_date: findHeader("as of date"),
+    metal: findHeader("metal"),
+    tenor_months: findHeader("tenor months"),
+    price: findHeader("price"),
+    real_10yr_yld: findHeader("10 yr real yld"),
+    dollar_index: findHeader("dollar index"),
+    deficit_gdp_flag: findHeader("deficit gdp flag"),
   };
 
   // All required columns must exist
@@ -310,8 +326,6 @@ export default async function handler(req, res) {
     }
 
     // 3b) Duplicate-date safety check for HISTORY (manual / sheet button flow)
-    // If we already have rows in metals_curve_history for this as_of_date and NOT force,
-    // return them so the Google Sheet can show the dialog.
     const existingHistory = await client.query(
       `
       SELECT metal,
@@ -400,7 +414,7 @@ export default async function handler(req, res) {
       );
     }
 
-    // Append to history (one snapshot per run per as_of_date after the guard above)
+    // Append to history
     for (const r of rows) {
       await client.query(
         `
