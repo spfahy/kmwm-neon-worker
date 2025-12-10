@@ -86,11 +86,6 @@ function cleanField(value) {
   return v.trim();
 }
 
-// Normalize header names: lowercase, compress spaces
-function normalizeHeaderName(name) {
-  return cleanField(name).toLowerCase().replace(/\s+/g, " ");
-}
-
 // Turn a numeric-looking string into a number, stripping commas
 function toNumber(value) {
   if (value == null) return null;
@@ -101,42 +96,24 @@ function toNumber(value) {
 
 // --------------------------------------------------
 // Parse Metals CSV from the Google Sheet
+// Assumes fixed column order:
+// 0: As Of Date
+// 1: Metal
+// 2: Tenor Months
+// 3: CME Contract (ignored)
+// 4: Price
+// 5: 10 Yr Real Yld
+// 6: Dollar Index
+// 7: Deficit GDP Flag
 // --------------------------------------------------
 function parseMetalsCsv(text) {
   const lines = text.trim().split(/\r?\n/);
   if (lines.length < 2) return [];
 
-  // Header row
-  const headerRaw = parseCsvLine(lines[0]);
-  const header = headerRaw.map(cleanField);
-  const headerNorm = header.map(normalizeHeaderName);
-
-  function findHeader(target) {
-    const t = target.toLowerCase();
-    return headerNorm.indexOf(t);
-  }
-
-  const idx = {
-    as_of_date: findHeader("as of date"),
-    metal: findHeader("metal"),
-    tenor_months: findHeader("tenor months"),
-    price: findHeader("price"),
-    real_10yr_yld: findHeader("10 yr real yld"),
-    dollar_index: findHeader("dollar index"),
-    deficit_gdp_flag: findHeader("deficit gdp flag"),
-  };
-
-  // All required columns must exist
-  if (
-    idx.as_of_date < 0 ||
-    idx.metal < 0 ||
-    idx.tenor_months < 0 ||
-    idx.price < 0 ||
-    idx.real_10yr_yld < 0 ||
-    idx.dollar_index < 0 ||
-    idx.deficit_gdp_flag < 0
-  ) {
-    console.error("Metals CSV header mismatch:", header);
+  // Header row (ignored except to verify we have enough columns)
+  const headerRaw = parseCsvLine(lines[0]).map(cleanField);
+  if (headerRaw.length < 8) {
+    console.error("Metals CSV header too short:", headerRaw);
     return [];
   }
 
@@ -148,14 +125,15 @@ function parseMetalsCsv(text) {
 
     const colsRaw = parseCsvLine(line);
     const cols = colsRaw.map(cleanField);
+    if (cols.length < 8) continue;
 
-    const asOf = cols[idx.as_of_date];
-    const metal = cols[idx.metal]?.toLowerCase();
-    const tenorStr = cols[idx.tenor_months];
-    const priceStr = cols[idx.price];
-    const realStr = cols[idx.real_10yr_yld];
-    const dxStr = cols[idx.dollar_index];
-    const deficitStr = cols[idx.deficit_gdp_flag];
+    const asOf = cols[0];
+    const metal = cols[1] ? String(cols[1]).toLowerCase() : "";
+    const tenorStr = cols[2];
+    const priceStr = cols[4];
+    const realStr = cols[5];
+    const dxStr = cols[6];
+    const deficitStr = cols[7];
 
     if (!asOf || !metal) continue;
 
