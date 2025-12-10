@@ -357,7 +357,46 @@ export default async function handler(req, res) {
     // Append to history
     for (const r of rows) {
       await client.query(
-        `
+        `// -------------------------------------------------------------
+// DUPLICATE-DATE SAFETY CHECK FOR metals_curve_history
+// -------------------------------------------------------------
+const force = String(req.query.force || "0") === "1";
+
+// Look to see if this date already exists in the history table
+const existingRows = await client.query(
+  `
+  SELECT *
+  FROM metals_curve_history
+  WHERE as_of_date = $1::date
+  ORDER BY metal, tenor_months, inserted_at DESC
+  `,
+  [todayStr]  // same date value you use in the INSERT below
+);
+
+// If rows already exist for this date and this is NOT a force run,
+// stop here and return the existing rows so the Sheet can show them.
+if (existingRows.rows.length > 0 && !force) {
+  return res.status(409).json({
+    status: "exists",
+    as_of_date: todayStr,
+    existing_row_count: existingRows.rows.length,
+    existing_rows: existingRows.rows,
+    message:
+      "Data already exists for this date. Call again with force=1 to delete and replace."
+  });
+}
+
+// If force=1 and rows already exist, wipe them before inserting new data
+if (existingRows.rows.length > 0 && force) {
+  await client.query(
+    `
+    DELETE FROM metals_curve_history
+    WHERE as_of_date = $1::date
+    `,
+    [todayStr]
+  );
+}
+
         INSERT INTO metals_curve_history
           (as_of_date, metal, tenor_months, price,
            real_10yr_yld, dollar_index, deficit_gdp_flag, inserted_at)
