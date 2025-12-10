@@ -244,7 +244,11 @@ export default async function handler(req, res) {
     const csvText = await resp.text();
     const rows = parseMetalsCsv(csvText);
 
-    if (!rows.length) {
+       if (!rows.length) {
+      const sample = csvText.slice(0, 400); // first 400 characters of what we got
+
+      console.error("Metals CSV debug sample:", sample);
+
       await logIngest(
         client,
         todayStr,
@@ -253,10 +257,13 @@ export default async function handler(req, res) {
         "no_rows_in_sheet_or_bad_headers",
         0
       );
-      return res
-        .status(400)
-        .json({ error: "no_rows_in_sheet_or_bad_headers" });
+
+      return res.status(400).json({
+        error: "no_rows_in_sheet_or_bad_headers",
+        sample,
+      });
     }
+
 
     // 3) Date validation
     const uniqueDates = [...new Set(rows.map((r) => r.as_of_date))];
