@@ -43,7 +43,6 @@ async function logIngest(client, runDate, source, status, reason, rowCount) {
   }
 }
 
-
 // Parse a single CSV line, handling quotes and commas in quotes
 function parseCsvLine(line) {
   const out = [];
@@ -189,15 +188,15 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: "unauthorized" });
   }
 
-  const source = String(req.query.source || "unknown"); // 'manual' or 'cron_1600'
+  const source = String(req.query.source || "unknown"); // 'sheet_button', 'cron_1600', etc.
   const force = String(req.query.force || "0") === "1";
 
   const todayStr = getTodayCT();
   const client = await pool.connect();
 
   try {
-    // 1) Check if a successful ingest already happened today
-    const existing = await client.query(
+    // 1) Check if a successful ingest already happened today (for cron sources)
+    const existingLog = await client.query(
       `
       SELECT id
       FROM metals_ingest_log
@@ -208,7 +207,7 @@ export default async function handler(req, res) {
       [todayStr]
     );
 
-    const hasSuccessToday = existing.rows.length > 0;
+    const hasSuccessToday = existingLog.rows.length > 0;
 
     if (source.startsWith("cron") && hasSuccessToday && !force) {
       await logIngest(
@@ -267,8 +266,7 @@ export default async function handler(req, res) {
 
     // 3) Date validation
     const uniqueDates = [...new Set(rows.map((r) => r.as_of_date))];
-    let sheetDate =
-      uniqueDates.length === 1 ? uniqueDates[0] : null;
+    let sheetDate = uniqueDates.length === 1 ? uniqueDates[0] : null;
 
     if (!force) {
       if (!sheetDate) {
@@ -311,11 +309,60 @@ export default async function handler(req, res) {
       }
     }
 
-    // 4) Write to Neon
+    // 3b) Duplicate-date safety check for HISTORY (manual / sheet button flow)
+    // If we already have rows in metals_curve_history for this as_of_date and NOT force,
+    // return them so the Google Sheet can show the dialog.
+    const existingHistory = await client.query(
+      `
+      SELECT metal,
+             tenor_months,
+             price,
+             real_10yr_yld,
+             dollar_index,
+             deficit_gdp_flag,
+             inserted_at
+      FROM metals_curve_history
+      WHERE as_of_date = $1::date
+      ORDER BY metal, tenor_months, inserted_at DESC
+      `,
+      [sheetDate]
+    );
+
+    if (existingHistory.rows.length > 0 && !force) {
+      await logIngest(
+        client,
+        todayStr,
+        source,
+        "skipped",
+        "history_exists_for_date",
+        existingHistory.rows.length
+      );
+
+      return res.status(409).json({
+        status: "exists",
+        as_of_date: sheetDate,
+        existing_row_count: existingHistory.rows.length,
+        existing_rows: existingHistory.rows,
+        message:
+          "Data already exists for this date. Call again with force=1 to delete and replace.",
+      });
+    }
+
+    // 4) Write to Neon (latest + history) inside a transaction
     await client.query("BEGIN");
-    
-        // Remove any existing rows for this as_of_date so old tenors (like 24m)
-    // cannot hang around once they are removed from the sheet.
+
+    // If force and history already existed, delete that date from history before inserting new
+    if (existingHistory.rows.length > 0 && force) {
+      await client.query(
+        `
+        DELETE FROM metals_curve_history
+        WHERE as_of_date = $1::date
+        `,
+        [sheetDate]
+      );
+    }
+
+    // Remove any existing rows for this as_of_date in latest, so old tenors cannot hang around
     await client.query(
       `
       DELETE FROM metals_curve_latest
@@ -323,7 +370,6 @@ export default async function handler(req, res) {
       `,
       [sheetDate]
     );
-
 
     // Upsert latest curve
     for (const r of rows) {
@@ -354,49 +400,10 @@ export default async function handler(req, res) {
       );
     }
 
-    // Append to history
+    // Append to history (one snapshot per run per as_of_date after the guard above)
     for (const r of rows) {
       await client.query(
-        `// -------------------------------------------------------------
-// DUPLICATE-DATE SAFETY CHECK FOR metals_curve_history
-// -------------------------------------------------------------
-const force = String(req.query.force || "0") === "1";
-
-// Look to see if this date already exists in the history table
-const existingRows = await client.query(
-  `
-  SELECT *
-  FROM metals_curve_history
-  WHERE as_of_date = $1::date
-  ORDER BY metal, tenor_months, inserted_at DESC
-  `,
-  [todayStr]  // same date value you use in the INSERT below
-);
-
-// If rows already exist for this date and this is NOT a force run,
-// stop here and return the existing rows so the Sheet can show them.
-if (existingRows.rows.length > 0 && !force) {
-  return res.status(409).json({
-    status: "exists",
-    as_of_date: todayStr,
-    existing_row_count: existingRows.rows.length,
-    existing_rows: existingRows.rows,
-    message:
-      "Data already exists for this date. Call again with force=1 to delete and replace."
-  });
-}
-
-// If force=1 and rows already exist, wipe them before inserting new data
-if (existingRows.rows.length > 0 && force) {
-  await client.query(
-    `
-    DELETE FROM metals_curve_history
-    WHERE as_of_date = $1::date
-    `,
-    [todayStr]
-  );
-}
-
+        `
         INSERT INTO metals_curve_history
           (as_of_date, metal, tenor_months, price,
            real_10yr_yld, dollar_index, deficit_gdp_flag, inserted_at)
